@@ -14,6 +14,50 @@
 #include <mach/mach_time.h>
 #endif
 
+/* BEGIN MONO_IO_PORTABILITY_H */
+
+#include <glib.h>
+#include <mono/utils/mono-compiler.h>
+#include "config.h"
+
+enum {
+        PORTABILITY_NONE        = 0x00,
+        PORTABILITY_UNKNOWN     = 0x01,
+        PORTABILITY_DRIVE       = 0x02,
+        PORTABILITY_CASE        = 0x04
+};
+
+#ifdef DISABLE_PORTABILITY
+
+#define mono_portability_helpers_init()
+#define mono_portability_find_file(pathname,last_exists) NULL
+
+#define IS_PORTABILITY_NONE FALSE
+#define IS_PORTABILITY_UNKNOWN FALSE
+#define IS_PORTABILITY_DRIVE FALSE
+#define IS_PORTABILITY_CASE FALSE
+#define IS_PORTABILITY_SET FALSE
+
+#else
+
+void mono_portability_helpers_init_COREFX (void);
+gchar *mono_portability_find_file_COREFX (const gchar *pathname, gboolean last_exists);
+#define mono_portability_helpers_init() mono_portability_helpers_init_COREFX()
+#define mono_portability_find_file(pathname,last_exists) mono_portability_find_file_COREFX(pathname,last_exists)
+
+extern int mono_io_portability_helpers_COREFX;
+#define mono_io_portability_helpers mono_io_portability_helpers_COREFX
+
+#define IS_PORTABILITY_NONE (mono_io_portability_helpers & PORTABILITY_NONE)
+#define IS_PORTABILITY_UNKNOWN (mono_io_portability_helpers & PORTABILITY_UNKNOWN)
+#define IS_PORTABILITY_DRIVE (mono_io_portability_helpers & PORTABILITY_DRIVE)
+#define IS_PORTABILITY_CASE (mono_io_portability_helpers & PORTABILITY_CASE)
+#define IS_PORTABILITY_SET (mono_io_portability_helpers > 0)
+
+#endif
+
+/* END MONO_IO_PORTABILITY_H */
+
 enum
 {
     SecondsToMicroSeconds = 1000000,  // 10^6
@@ -43,6 +87,20 @@ int32_t SystemNative_UTime(const char* path, UTimBuf* times)
 
     int32_t result;
     while (CheckInterrupted(result = utime(path, &temp)));
+    if (result == -1 && errno == ENOENT && IS_PORTABILITY_SET)
+    {
+        int32_t saved_errno = errno;
+        char* located_filename = mono_portability_find_file(path, TRUE);
+
+        if (located_filename == NULL)
+        {
+            errno = saved_errno;
+            return -1;
+        }
+
+        while (CheckInterrupted(result = utime(located_filename, &temp)));
+        g_free(located_filename);
+    }
     return result;
 }
 
@@ -55,6 +113,20 @@ int32_t SystemNative_UTimes(const char* path, TimeValPair* times)
 
     int32_t result;
     while (CheckInterrupted(result = utimes(path, temp)));
+    if (result == -1 && errno == ENOENT && IS_PORTABILITY_SET)
+    {
+        int32_t saved_errno = errno;
+        char* located_filename = mono_portability_find_file(path, TRUE);
+
+        if (located_filename == NULL)
+        {
+            errno = saved_errno;
+            return -1;
+        }
+
+        while (CheckInterrupted(result = utimes(located_filename, temp)));
+        g_free(located_filename);
+    }
     return result;
 }
 
